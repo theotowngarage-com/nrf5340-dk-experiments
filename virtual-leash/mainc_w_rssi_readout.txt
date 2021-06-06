@@ -1,0 +1,331 @@
+/* main.c - Application main entry point */
+
+/*
+ * Copyright (c) 2015-2016 Intel Corporation
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+#include <zephyr/types.h>
+#include <stddef.h>
+#include <string.h>
+#include <errno.h>
+#include <sys/printk.h>
+#include <sys/byteorder.h>
+#include <zephyr.h>
+
+#include <settings/settings.h>
+
+#include <bluetooth/bluetooth.h>
+#include <bluetooth/hci.h>
+#include <bluetooth/hci_vs.h>
+#include <bluetooth/conn.h>
+#include <bluetooth/uuid.h>
+#include <bluetooth/gatt.h>
+
+//#include "service.h"
+//Zephyr bluetooth stack: https://docs.zephyrproject.org/latest/guides/bluetooth/bluetooth-arch.html
+
+//Controller 
+static struct bt_conn *default_conn;
+static uint16_t default_conn_handle;
+
+//Unique Universal ID of service
+static struct bt_uuid_128 otown_uuid = BT_UUID_INIT_128(
+	0xf0, 0xde, 0xbc, 0x9a, 0x78, 0x56, 0x34, 0x12,
+	0x78, 0x56, 0x34, 0x12, 0x78, 0x56, 0x34, 0x12);
+
+static struct bt_uuid_128 vnd_enc_uuid = BT_UUID_INIT_128(
+	0xf1, 0xde, 0xbc, 0x9a, 0x78, 0x56, 0x34, 0x12,
+	0x78, 0x56, 0x34, 0x12, 0x78, 0x56, 0x34, 0x12);
+
+static struct bt_uuid_128 vnd_auth_uuid = BT_UUID_INIT_128(
+	0xf2, 0xde, 0xbc, 0x9a, 0x78, 0x56, 0x34, 0x12,
+	0x78, 0x56, 0x34, 0x12, 0x78, 0x56, 0x34, 0x12);
+
+
+static void read_conn_rssi(uint16_t handle, int8_t *rssi)
+{
+	struct net_buf *buf, *rsp = NULL;
+	struct bt_hci_cp_read_rssi *cp;
+	struct bt_hci_rp_read_rssi *rp;
+
+	int err;
+
+	buf = bt_hci_cmd_create(BT_HCI_OP_READ_RSSI, sizeof(*cp));
+	if (!buf) {
+		printk("Unable to allocate command buffer\n");
+		return;
+	}
+
+	cp = net_buf_add(buf, sizeof(*cp));
+	cp->handle = sys_cpu_to_le16(handle);
+
+	err = bt_hci_cmd_send_sync(BT_HCI_OP_READ_RSSI, buf, &rsp);
+	if (err) {
+		uint8_t reason = rsp ?
+			((struct bt_hci_rp_read_rssi *)rsp->data)->status : 0;
+		printk("Read RSSI err: %d reason 0x%02x\n", err, reason);
+		return;
+	}
+
+	rp = (void *)rsp->data;
+	*rssi = rp->rssi;
+
+	net_buf_unref(rsp);
+}
+
+
+
+//Initial value of the service
+static uint8_t otown_value[] = { 'O', 'k', 'T', 'o', 'w', 'n' };  
+
+
+//Callback function of read command
+static ssize_t read_otown(struct bt_conn *conn, const struct bt_gatt_attr *attr,
+			void *buf, uint16_t len, uint16_t offset)
+{
+    //pointer to data in GATT structure
+	const char *value = attr->user_data;
+
+	return bt_gatt_attr_read(conn, attr, buf, len, offset, value,
+				 strlen(value));
+}
+//Callback function of write command
+static ssize_t write_otown(struct bt_conn *conn, const struct bt_gatt_attr *attr,
+			 const void *buf, uint16_t len, uint16_t offset,
+			 uint8_t flags)
+{
+	uint8_t *value = attr->user_data;
+		
+	if (offset + len > sizeof(otown_value)) {
+		return BT_GATT_ERR(BT_ATT_ERR_INVALID_OFFSET);
+
+	}
+	memcpy(value + offset, buf, len);
+	printk("Written done len: %d \n", len);
+	printk("Value = ");
+
+	for (size_t i = 0; i < len; i++)
+	{
+		printk("%c", *value++);	
+	} 
+	printk("\n");
+
+	return len;
+}
+//Client Characteristic Configuration.
+static void vnd_ccc_cfg_changed(const struct bt_gatt_attr *attr, uint16_t value) //Client Characterictics Configuration
+{
+	
+}
+
+//Maybe remove?
+static int signed_value;
+
+static ssize_t read_signed(struct bt_conn *conn, const struct bt_gatt_attr *attr,
+			   void *buf, uint16_t len, uint16_t offset)
+{
+	const char *value = attr->user_data;
+
+	return bt_gatt_attr_read(conn, attr, buf, len, offset, value,
+				 sizeof(signed_value));
+}
+
+static ssize_t write_signed(struct bt_conn *conn, const struct bt_gatt_attr *attr,
+			    const void *buf, uint16_t len, uint16_t offset,
+			    uint8_t flags)
+{
+	uint8_t *value = attr->user_data;
+
+	if (offset + len > sizeof(signed_value)) {
+		return BT_GATT_ERR(BT_ATT_ERR_INVALID_OFFSET);
+	}
+
+	memcpy(value + offset, buf, len);
+
+	return len;
+}
+
+static const struct bt_uuid_128 vnd_signed_uuid = BT_UUID_INIT_128(
+	0xf3, 0xde, 0xbc, 0x9a, 0x78, 0x56, 0x34, 0x13,
+	0x78, 0x56, 0x34, 0x12, 0x78, 0x56, 0x34, 0x13);
+
+static const struct bt_uuid_128 vnd_write_cmd_uuid = BT_UUID_INIT_128(
+	0xf4, 0xde, 0xbc, 0x9a, 0x78, 0x56, 0x34, 0x12,
+	0x78, 0x56, 0x34, 0x12, 0x78, 0x56, 0x34, 0x12);
+
+static ssize_t write_without_rsp_vnd(struct bt_conn *conn,
+				     const struct bt_gatt_attr *attr,
+				     const void *buf, uint16_t len, uint16_t offset,
+				     uint8_t flags)
+{
+	uint8_t *value = attr->user_data;
+
+	/* Write request received. Reject it since this char only accepts
+	 * Write Commands.
+	 */
+	if (!(flags & BT_GATT_WRITE_FLAG_CMD)) {
+		return BT_GATT_ERR(BT_ATT_ERR_WRITE_REQ_REJECTED);
+	}
+
+	if (offset + len > sizeof(otown_value)) {
+		return BT_GATT_ERR(BT_ATT_ERR_INVALID_OFFSET);
+	}
+
+	memcpy(value + offset, buf, len);
+
+	return len;
+}
+//REMOVE UP TO HERE
+
+/* Primary Service Declaration */
+BT_GATT_SERVICE_DEFINE(otown_svc, //create a struct with _name
+	BT_GATT_PRIMARY_SERVICE(&otown_uuid),
+	BT_GATT_CHARACTERISTIC(&vnd_enc_uuid.uuid,
+			       BT_GATT_CHRC_READ | BT_GATT_CHRC_WRITE,
+			       BT_GATT_PERM_READ |
+			       BT_GATT_PERM_WRITE,
+			       read_otown, write_otown, otown_value),
+	BT_GATT_CCC(vnd_ccc_cfg_changed,
+		    BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
+	BT_GATT_CHARACTERISTIC(&vnd_auth_uuid.uuid,
+			       BT_GATT_CHRC_READ | BT_GATT_CHRC_WRITE,
+			       BT_GATT_PERM_READ |
+			       BT_GATT_PERM_WRITE,
+			       read_otown, write_otown, otown_value),
+);
+
+//Advertising address
+static const struct bt_data ad[] = {
+	BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
+	BT_DATA_BYTES(BT_DATA_UUID16_ALL),
+	BT_DATA_BYTES(BT_DATA_UUID128_ALL,
+		      0xf0, 0xde, 0xbc, 0x9a, 0x78, 0x56, 0x34, 0x12,
+		      0x78, 0x56, 0x34, 0x12, 0x78, 0x56, 0x34, 0x12),
+};
+
+static void connected(struct bt_conn *conn, uint8_t err)
+{
+	char addr[BT_ADDR_LE_STR_LEN];
+	int ret;
+	if (err) {
+		printk("Connection failed (err 0x%02x)\n", err);
+	} 
+	else {
+		default_conn = bt_conn_ref(conn);
+		ret = bt_hci_get_conn_handle(default_conn,
+					     &default_conn_handle);
+		if (ret) {
+			printk("No connection handle (err %d)\n", ret);
+		} 
+		else {
+			/* Send first at the default selected power */
+			bt_addr_le_to_str(bt_conn_get_dst(conn),
+							  addr, sizeof(addr));
+			printk("Connected via connection (%d)",default_conn_handle);
+		}
+	}
+}
+
+static void disconnected(struct bt_conn *conn, uint8_t reason)
+{
+	if (default_conn) {
+		bt_conn_unref(default_conn);
+		default_conn = NULL;
+	}
+	printk("Disconnected (reason 0x%02x)\n", reason);
+	
+}
+
+static struct bt_conn_cb conn_callbacks = {
+	.connected = connected,
+	.disconnected = disconnected,
+};
+
+static void bt_ready(void)
+{
+	int err;
+
+	printk("Bluetooth initialized\n");
+
+	if (IS_ENABLED(CONFIG_SETTINGS)) {
+		settings_load();
+	}
+
+	err = bt_le_adv_start(BT_LE_ADV_CONN_NAME, ad, ARRAY_SIZE(ad), NULL, 0);
+	if (err) {
+		printk("Advertising failed to start (err %d)\n", err);
+		return;
+	}
+
+	printk("Advertising successfully started\n");
+}
+
+//Function called when Autharisation is requested
+static void auth_passkey_display(struct bt_conn *conn, unsigned int passkey)
+{
+	char addr[BT_ADDR_LE_STR_LEN];
+
+	bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
+
+	printk("Passkey for %s: %06u\n", addr, passkey);
+}
+
+static void auth_cancel(struct bt_conn *conn)
+{
+	char addr[BT_ADDR_LE_STR_LEN];
+
+	bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
+
+	printk("Pairing cancelled: %s\n", addr);
+}
+
+//callback in case of autherisation
+static struct bt_conn_auth_cb auth_cb_display = {
+	.passkey_display = auth_passkey_display,
+	.passkey_entry = NULL,
+	.cancel = auth_cancel,
+};
+
+void main(void)
+{
+	int err;
+	default_conn = NULL;
+
+
+	err = bt_enable(NULL);
+	if (err) {
+		printk("Bluetooth init failed (err %d)\n", err);
+		return;
+	}
+
+	//Initialize service and start advertising
+	bt_ready();  
+
+	bt_conn_cb_register(&conn_callbacks);
+	//bt_conn_auth_cb_register(&auth_cb_display);
+
+	/* Implement notification. At the moment there is no suitable way
+	 * of starting delayed work so we do it here
+	 */
+	while (1) {
+		k_sleep(K_SECONDS(1));
+
+	// 	if (simulate_vnd) {
+	// 		if (indicating) {
+	// 			continue;
+	// 		}
+
+	// 		ind_params.attr = &vnd_svc.attrs[2];
+	// 		ind_params.func = indicate_cb;
+	// 		ind_params.destroy = indicate_destroy;
+	// 		ind_params.data = &indicating;
+	// 		ind_params.len = sizeof(indicating);
+
+	// 		if (bt_gatt_indicate(NULL, &ind_params) == 0) {
+	// 			indicating = 1U;
+	// 		}
+	// 	}
+	}
+}

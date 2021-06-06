@@ -1,0 +1,27 @@
+# Incresed stack due to settings API usage
+CONFIG_SYSTEM_WORKQUEUE_STACK_SIZE=2048
+
+#Details can be found in https://docs.zephyrproject.org/latest/reference/kconfig/index-all.html
+CONFIG_BT=y
+CONFIG_BT_DEBUG_LOG=y
+CONFIG_BT_SMP=y #This option enables support for the Security Manager Protocol (SMP), making it possible to pair devices over LE.
+CONFIG_BT_SIGNING=y #This option enables data signing which is used for transferring authenticated data in an unencrypted connection.
+CONFIG_BT_PERIPHERAL=y #LE Peripheral role support.
+CONFIG_BT_DIS=y #Enable GATT Device Information service
+CONFIG_BT_ATT_PREPARE_COUNT=5 #Number of buffers available for ATT prepare write, setting this to 0 disables GATT long/reliable writes.
+CONFIG_BT_PRIVACY=y #Enable local Privacy Feature support. This makes it possible to use Resolvable Private Addresses (RPAs).
+#Device config
+CONFIG_BT_DEVICE_NAME="OTown Peripheral"
+CONFIG_BT_DEVICE_APPEARANCE=833
+CONFIG_BT_DEVICE_NAME_DYNAMIC=y #Enabling this option allows for runtime configuration of Bluetooth device name.
+#Bluetooth device name storage size. Storage can be up to 248 bytes long (excluding NULL termination).
+CONFIG_BT_DEVICE_NAME_MAX=65 
+CONFIG_BT_KEYS_OVERWRITE_OLDEST=y #With this option enabled, if a pairing attempt occurs and the key storage is full, then the oldest keys in storage will be removed to free space for the new pairing keys.
+CONFIG_BT_SETTINGS=y
+#FLASH
+CONFIG_FLASH=y
+CONFIG_FLASH_PAGE_LAYOUT=y
+CONFIG_FLASH_MAP=y
+CONFIG_NVS=y #Non-volatile storage
+CONFIG_SETTINGS=y #The settings subsystem allows its users to serialize and deserialize state in memory into and from non-volatile memory. It supports several back-ends to store and load serialized data from and it can do so atomically for all involved modules.
+
