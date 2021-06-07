@@ -21,11 +21,16 @@
 //Zephyr's guide https://docs.zephyrproject.org/latest/reference/bluetooth/gatt.html
 
 //Unique Universal ID of service
-#define OTOWN_UUID BT_UUID_DECLARE_128(BT_UUID_128_ENCODE(0x39342d62, 0x3932, 0x662d, 0x6538, 0x313134343332))
-#define CHARACTERISTIC_UUID BT_UUID_DECLARE_128(BT_UUID_128_ENCODE(0x63342d31, 0x3836, 0x372d, 0x3166, 0x306331633562))
+#define OTOWN_UUID                      BT_UUID_DECLARE_128(BT_UUID_128_ENCODE(0x39342d62, 0x3932, 0x662d, 0x6538, 0x313134343332))
+#define REMOTE_RSSI_CHARACTERISTIC_UUID BT_UUID_DECLARE_128(BT_UUID_128_ENCODE(0x63342d31, 0x3836, 0x372d, 0x3166, 0x306331633562))
+#define DETACH_CHARACTERISTIC_UUID      BT_UUID_DECLARE_128(BT_UUID_128_ENCODE(0x1e086d95, 0x7faa, 0x4993, 0x984e, 0xcf234cec373b))
+
+#define DETACH_COMMAND "detach"
 
 //Initial value of the service
 static uint8_t otown_value[] = {'O', ' ', 'T', 'o', 'w', 'n'};
+static char detach_request[16];
+static bool detached_safely = false;
 
 static ssize_t read_otown(struct bt_conn *conn, const struct bt_gatt_attr *attr,
     void *buf, uint16_t len, uint16_t offset) {
@@ -63,6 +68,27 @@ static ssize_t write_otown(struct bt_conn *conn, const struct bt_gatt_attr *attr
   return len;
 }
 
+static ssize_t write_detach(struct bt_conn *conn, const struct bt_gatt_attr *attr,
+    const void *buf, uint16_t len, uint16_t offset,
+    uint8_t flags) {
+  uint8_t *value = attr->user_data;
+
+  if (offset + len > sizeof(detach_request)) {
+    return BT_GATT_ERR(BT_ATT_ERR_INVALID_OFFSET);
+  }
+  memcpy(value + offset, buf, len);
+
+  //Print value
+  printk("Detach = %s\n", value);
+
+  if(strncmp(value, DETACH_COMMAND, strlen(DETACH_COMMAND)) == 0) {
+    printk("Detaching from phone\n");
+    detached_safely = true;
+  }
+
+  return len;
+}
+
 //Client Characteristic Configuration.
 static void vnd_ccc_cfg_changed(const struct bt_gatt_attr *attr, uint16_t value) //Client Characterictics Configuration
 {
@@ -71,22 +97,27 @@ static void vnd_ccc_cfg_changed(const struct bt_gatt_attr *attr, uint16_t value)
 /* Primary Service Declaration */
 BT_GATT_SERVICE_DEFINE(otown_svc,               //create a struct with _name
     BT_GATT_PRIMARY_SERVICE(OTOWN_UUID),       //Main UUID
-    BT_GATT_CHARACTERISTIC(CHARACTERISTIC_UUID,  //Charasteristics attribute UUID
+    BT_GATT_CHARACTERISTIC(REMOTE_RSSI_CHARACTERISTIC_UUID,  //Charasteristics attribute UUID
         BT_GATT_CHRC_READ | BT_GATT_CHRC_WRITE,   //Properties
         BT_GATT_PERM_READ | BT_GATT_PERM_WRITE, // permissions read/write no security
         //BT_GATT_PERM_READ_ENCRYPT |             //Permission
         //    BT_GATT_PERM_WRITE_ENCRYPT,         //Permission
         read_otown, write_otown, otown_value),  //Callback functions and value
+    BT_GATT_CHARACTERISTIC(DETACH_CHARACTERISTIC_UUID,  //Charasteristics attribute UUID
+        BT_GATT_CHRC_WRITE,   //Properties
+        BT_GATT_PERM_WRITE, // permissions read/write no security
+        NULL, write_detach, detach_request),  //Callback functions and value
     BT_GATT_CCC(vnd_ccc_cfg_changed,            //Client Configuration Configuration
-        BT_GATT_PERM_READ | BT_GATT_PERM_WRITE_ENCRYPT));
+        BT_GATT_PERM_READ | BT_GATT_PERM_WRITE_ENCRYPT),
+        );
 
 //Advertising address
-static const struct bt_data ad[] = {
+static const struct bt_data advertising_data[] = {
     BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
-    //BT_DATA_BYTES(BT_DATA_UUID16_ALL), //Short UUIDs, I think used for standardized characteristics
-    BT_DATA_BYTES(BT_DATA_UUID128_ALL, //Our UUID
-        0xf0, 0xde, 0xbc, 0x9a, 0x78, 0x56, 0x34, 0x12,
-        0x78, 0x56, 0x34, 0x12, 0x78, 0x56, 0x34, 0x12),
+    // last service advertised UUID
+    BT_DATA_BYTES(BT_DATA_UUID128_ALL, BT_UUID_128_ENCODE(0x39342d62, 0x3932, 0x662d, 0x6538, 0x313134343332)),
+    // this doesn't work, advertising fails -22
+    //BT_DATA_BYTES(BT_DATA_NAME_COMPLETE, 'O', ' ', 'T', 'o', 'w', 'n'),
 };
 
 static void connected(struct bt_conn *conn, uint8_t err) {
@@ -95,11 +126,15 @@ static void connected(struct bt_conn *conn, uint8_t err) {
   } else {
     printk("Connected\n");
   }
+  detached_safely = false;
 }
 
 static void disconnected(struct bt_conn *conn, uint8_t reason) {
   printk("Disconnected (reason 0x%02x)\n", reason);
-  gpio_set_red(true);
+  // turn on red leds if remote device did not detach safely before disconnecting
+  if(!detached_safely) {
+    gpio_set_red(true);
+  }
 }
 
 static struct bt_conn_cb conn_callbacks = {
@@ -116,12 +151,17 @@ void bt_ready(void) {
     settings_load();
   }
 
+  // register connect and disonnect callbacks
   bt_conn_cb_register(&conn_callbacks);
 
-  err = bt_le_adv_start(BT_LE_ADV_CONN_NAME, ad, ARRAY_SIZE(ad), NULL, 0); //Advertising parameters, data to be advertised and used for response
+  err = bt_le_adv_start(BT_LE_ADV_CONN_NAME, advertising_data, ARRAY_SIZE(advertising_data), NULL, 0); //Advertising parameters, data to be advertised and used for response
   if (err) {
     printk("Advertising failed to start (err %d)\n", err);
     return;
   }
   printk("Advertising successfully started\n");
+}
+
+void bt_service_spin() {
+    gpio_set_green(false);
 }

@@ -30,6 +30,6 @@ void main(void) {
 
   while (1) {
     k_sleep(K_MSEC(50));
-    gpio_set_green(false);
+    bt_service_spin();
   }
 }
