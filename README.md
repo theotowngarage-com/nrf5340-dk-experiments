@@ -20,13 +20,13 @@ When power level is below configured setting then red led strip lights up indica
 - nRF5340DK as a central
 - nRF5340DK as a peripheral (final version)
 - Using mit app inventor with BluetoothLE extension. Extension API allows reading RSSI while connected, and sending data to custom characteristic.
-
+- LVGL library for display GUI
 ###What caused struggles
 - Kconfig
 - Lack of Bluetooth HAL descriptions/explanations in Zephyr's documentation
 - Setting up Zephyr Vanilla (main branch) toolchain
 
-###Used IDEs/SDKs/Tools
+###Used IDEs/SDKs/Tools and other notes
 ####Segger IDE
 - easy to setup & use
 - in-built debugging tools
