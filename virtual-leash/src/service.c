@@ -19,6 +19,11 @@
 #include "service.h"
 #include "gui.h"
 
+// logging module configuration
+#define LOG_LEVEL CONFIG_LOG_DEFAULT_LEVEL
+#include <logging/log.h>
+LOG_MODULE_REGISTER(service);
+
 //Zephyr's guide https://docs.zephyrproject.org/latest/reference/bluetooth/gatt.html
 
 //Unique Universal ID of service
@@ -27,11 +32,37 @@
 #define DETACH_CHARACTERISTIC_UUID      BT_UUID_DECLARE_128(BT_UUID_128_ENCODE(0x1e086d95, 0x7faa, 0x4993, 0x984e, 0xcf234cec373b))
 
 #define DETACH_COMMAND "detach"
+#define RSSI_HISTORY_LENGTH 4
 
 //Initial value of the service
 static uint8_t otown_value[16];
 static char detach_request[16];
 static bool detached_safely = false;
+static int rssi_history[RSSI_HISTORY_LENGTH];
+
+// Queue for passing received RSSI values to main thread
+K_MSGQ_DEFINE(rssi_queue, sizeof(int), 4, 4);
+
+void rssi_clear() {
+  for(uint8_t i = 0; i < RSSI_HISTORY_LENGTH; i++) {
+    rssi_history[i] = INT_MAX;
+  }
+}
+
+void rssi_add(int rssi) {
+  for(uint8_t i = 1; i < RSSI_HISTORY_LENGTH; i++) {
+    rssi_history[i - 1] = rssi_history[i];
+  }
+  rssi_history[RSSI_HISTORY_LENGTH - 1] = rssi;
+}
+
+int rssi_max() {
+  int min_rssi = INT_MIN;
+  for(uint8_t i = 0; i < RSSI_HISTORY_LENGTH; i++) {
+    min_rssi = rssi_history[i] > min_rssi ? rssi_history[i] : min_rssi;
+  }
+  return min_rssi;
+}
 
 static ssize_t read_otown(struct bt_conn *conn, const struct bt_gatt_attr *attr,
     void *buf, uint16_t len, uint16_t offset) {
@@ -53,20 +84,12 @@ static ssize_t write_otown(struct bt_conn *conn, const struct bt_gatt_attr *attr
   }
   memcpy(value + offset, buf, len);
 
-  //Print value
-  printk("Value = %s\n", value);
+  // Print raw value
+  LOG_INF("Value = %s", log_strdup(value));
 
-  //RSSI LED trigger
   int value_int = atoi(value);
-  printk("value_int = %d\n", value_int);
-  if (value_int < -80) {
-    gpio_set_red(true);
-  } else {
-    gpio_set_red(false);
-    gpio_set_green(true);
-  }
 
-  //gui_add_point_to_chart(value_int);
+  k_msgq_put(&rssi_queue, &value_int, K_NO_WAIT);
   return len;
 }
 
@@ -81,10 +104,10 @@ static ssize_t write_detach(struct bt_conn *conn, const struct bt_gatt_attr *att
   memcpy(value + offset, buf, len);
 
   //Print value
-  printk("Detach = %s\n", value);
+  LOG_INF("Detach = %s", log_strdup(value));
 
   if(strncmp(value, DETACH_COMMAND, strlen(DETACH_COMMAND)) == 0) {
-    printk("Detaching from phone\n");
+    LOG_INF("Detaching from phone\n");
     detached_safely = true;
   }
 
@@ -122,15 +145,16 @@ static const struct bt_data advertising_data[] = {
 
 static void connected(struct bt_conn *conn, uint8_t err) {
   if (err) {
-    printk("Connection failed (err 0x%02x)\n", err);
+    LOG_ERR("Connection failed (err 0x%02x)\n", err);
   } else {
-    printk("Connected\n");
+    LOG_INF("Connected\n");
   }
   detached_safely = false;
+  rssi_clear();
 }
 
 static void disconnected(struct bt_conn *conn, uint8_t reason) {
-  printk("Disconnected (reason 0x%02x)\n", reason);
+  LOG_INF("Disconnected (reason 0x%02x)\n", reason);
   // turn on red leds if remote device did not detach safely before disconnecting
   if(!detached_safely) {
     gpio_set_red(true);
@@ -145,7 +169,7 @@ static struct bt_conn_cb conn_callbacks = {
 void bt_ready(void) {
   int err;
 
-  printk("Bluetooth initialized\n");
+  LOG_INF("Bluetooth initialized\n");
 
   if (IS_ENABLED(CONFIG_SETTINGS)) {
     settings_load();
@@ -156,12 +180,24 @@ void bt_ready(void) {
 
   err = bt_le_adv_start(BT_LE_ADV_CONN_NAME, advertising_data, ARRAY_SIZE(advertising_data), NULL, 0); //Advertising parameters, data to be advertised and used for response
   if (err) {
-    printk("Advertising failed to start (err %d)\n", err);
+    LOG_ERR("Advertising failed to start (err %d)\n", err);
     return;
   }
-  printk("Advertising successfully started\n");
+  LOG_INF("Advertising successfully started\n");
 }
 
 void bt_service_spin() {
     gpio_set_green(false);
+    int rssi;
+    if(k_msgq_get(&rssi_queue, &rssi, K_NO_WAIT) == 0) {
+      LOG_INF("RSSI = %d", rssi);
+      gui_add_point_to_chart(rssi);
+      rssi_add(rssi);
+      if(rssi_max() < -80) {
+        gpio_set_red(true);
+      } else {
+        gpio_set_red(false);
+        gpio_set_green(true);
+      }
+    }
 }
