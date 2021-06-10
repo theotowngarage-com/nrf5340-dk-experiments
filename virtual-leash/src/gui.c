@@ -5,7 +5,6 @@
 #include <stdio.h>
 #include <string.h>
 #include <zephyr.h>
-#include "otown_logo_convert.c"
 
 
 #define LOG_LEVEL CONFIG_LOG_DEFAULT_LEVEL
@@ -39,6 +38,7 @@ lv_obj_t *btn1, *btn1_label;
 lv_obj_t *checkbox_led;
 lv_obj_t *image_led;
 lv_obj_t *image_bg[12];
+lv_obj_t *otown_logo;
 
 // Styles
 lv_style_t style_btn, style_label, style_label_value, style_checkbox;
@@ -56,6 +56,8 @@ LV_FONT_DECLARE(calibri_32b);
 //LV_IMG_DECLARE(led_on);
 //LV_IMG_DECLARE(led_off);
 //LV_IMG_DECLARE(img_noise_background);
+LV_IMG_DECLARE(otown_logo_convert); //make image variable (pixel array) visible in the C file
+
 
 // Data chart
 lv_obj_t *chart;
@@ -383,11 +385,10 @@ static void process_cmd_msg_queue(void) {
 //O'Town Image Logo configuration
 void lv_img_logo(void)
 {
-    LV_IMG_DECLARE(otown_logo_convert_map); //make image variable (pixel array) visible in the C file
-    lv_obj_t * otown_logo = lv_img_create(lv_scr_act()); //some HAL function
-    lv_img_set_src(otown_logo, &otown_logo_convert_map); //source the image
-    lv_obj_align(otown_logo, LV_ALIGN_CENTER, 0, -20);
-    lv_obj_set_size(otown_logo, 200, 200);
+    otown_logo = lv_img_create(lv_scr_act(), NULL); //some HAL function
+    lv_obj_set_pos(otown_logo, 320-90, 240-90);
+    lv_obj_set_size(otown_logo, 90, 90);
+    lv_img_set_src(otown_logo, &otown_logo_convert); //source the image
 }
 
 void gui_run(void) {
@@ -401,7 +402,7 @@ void gui_run(void) {
   init_styles();
 
   init_chart_gui();
-
+  lv_img_logo();
   display_blanking_off(display_dev);
 
   gui_initialized = true;
