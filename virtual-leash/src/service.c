@@ -17,6 +17,7 @@
 
 #include "gpio.h"
 #include "service.h"
+#include "gui.h"
 
 //Zephyr's guide https://docs.zephyrproject.org/latest/reference/bluetooth/gatt.html
 
@@ -28,7 +29,7 @@
 #define DETACH_COMMAND "detach"
 
 //Initial value of the service
-static uint8_t otown_value[] = {'O', ' ', 'T', 'o', 'w', 'n'};
+static uint8_t otown_value[16];
 static char detach_request[16];
 static bool detached_safely = false;
 
@@ -65,6 +66,7 @@ static ssize_t write_otown(struct bt_conn *conn, const struct bt_gatt_attr *attr
     gpio_set_green(true);
   }
 
+  //gui_add_point_to_chart(value_int);
   return len;
 }
 
@@ -100,8 +102,6 @@ BT_GATT_SERVICE_DEFINE(otown_svc,               //create a struct with _name
     BT_GATT_CHARACTERISTIC(REMOTE_RSSI_CHARACTERISTIC_UUID,  //Charasteristics attribute UUID
         BT_GATT_CHRC_READ | BT_GATT_CHRC_WRITE,   //Properties
         BT_GATT_PERM_READ | BT_GATT_PERM_WRITE, // permissions read/write no security
-        //BT_GATT_PERM_READ_ENCRYPT |             //Permission
-        //    BT_GATT_PERM_WRITE_ENCRYPT,         //Permission
         read_otown, write_otown, otown_value),  //Callback functions and value
     BT_GATT_CHARACTERISTIC(DETACH_CHARACTERISTIC_UUID,  //Charasteristics attribute UUID
         BT_GATT_CHRC_WRITE,   //Properties
