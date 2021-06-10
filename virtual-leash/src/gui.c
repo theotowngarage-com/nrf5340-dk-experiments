@@ -5,6 +5,8 @@
 #include <stdio.h>
 #include <string.h>
 #include <zephyr.h>
+#include "otown_logo_convert.c"
+
 
 #define LOG_LEVEL CONFIG_LOG_DEFAULT_LEVEL
 #include <logging/log.h>
@@ -376,6 +378,16 @@ static void process_cmd_msg_queue(void) {
       break;
     }
   }
+}
+
+//O'Town Image Logo configuration
+void lv_img_logo(void)
+{
+    LV_IMG_DECLARE(otown_logo_convert_map); //make image variable (pixel array) visible in the C file
+    lv_obj_t * otown_logo = lv_img_create(lv_scr_act()); //some HAL function
+    lv_img_set_src(otown_logo, &otown_logo_convert_map); //source the image
+    lv_obj_align(otown_logo, LV_ALIGN_CENTER, 0, -20);
+    lv_obj_set_size(otown_logo, 200, 200);
 }
 
 void gui_run(void) {
