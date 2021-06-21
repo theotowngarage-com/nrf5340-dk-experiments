@@ -387,7 +387,7 @@ void lv_img_logo(void)
 {
     otown_logo = lv_img_create(lv_scr_act(), NULL); //some HAL function
     lv_obj_set_pos(otown_logo, 320-90, 240-90);
-    lv_obj_set_size(otown_logo, 90, 90);
+    //lv_obj_set_size(otown_logo, 90, 90);
     lv_img_set_src(otown_logo, &otown_logo_convert); //source the image
 }
 
